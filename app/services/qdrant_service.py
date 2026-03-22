@@ -220,16 +220,16 @@ class QdrantService:
 
         query_vector = await self._encode_single(query)
 
-        results = await self._client.search(
+        response = await self._client.query_points(
             collection_name=settings.qdrant_papers_collection,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit,
             score_threshold=score_threshold,
             with_payload=True,
         )
 
         papers: list[Paper] = []
-        for hit in results:
+        for hit in response.points:
             paper = _payload_to_paper(hit.payload)
             if paper:
                 papers.append(paper)
