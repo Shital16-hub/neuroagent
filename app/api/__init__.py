@@ -1,0 +1,1 @@
+"""NeuroAgent FastAPI application."""
