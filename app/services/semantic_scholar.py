@@ -55,9 +55,9 @@ def _parse_paper(data: dict[str, Any]) -> Optional[Paper]:
 
         s2_id: str = data.get("paperId", "")
         external_ids: dict[str, str] = {
-            k.lower(): v
+            k.lower(): str(v)
             for k, v in (data.get("externalIds") or {}).items()
-            if v
+            if v is not None
         }
 
         # Prefer DOI as canonical identifier; fall back to arXiv ID, then S2 ID

@@ -112,7 +112,10 @@ class ArxivClient:
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> "ArxivClient":
-        self._client = httpx.AsyncClient(timeout=self._timeout)
+        self._client = httpx.AsyncClient(
+            timeout=self._timeout,
+            follow_redirects=True,  # arXiv API issues 301 redirects
+        )
         return self
 
     async def __aexit__(self, *_) -> None:
