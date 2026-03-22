@@ -35,7 +35,7 @@ class Settings(BaseSettings):
         description="Default Groq model for fast tasks",
     )
     reasoning_llm_model: str = Field(
-        default="deepseek-r1-distill-llama-70b",
+        default="llama-3.3-70b-versatile",
         description="Groq model for reasoning-heavy tasks",
     )
     embedding_model: str = Field(

@@ -42,7 +42,7 @@ class LLMFactory:
 
     # Groq model identifiers (free tier)
     GROQ_FAST_MODEL = "llama-3.1-8b-instant"
-    GROQ_REASONING_MODEL = "deepseek-r1-distill-llama-70b"
+    GROQ_REASONING_MODEL = "llama-3.3-70b-versatile"
     GROQ_BALANCED_MODEL = "llama-3.1-70b-versatile"
 
     # OpenAI model identifiers

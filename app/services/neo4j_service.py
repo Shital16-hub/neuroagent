@@ -126,6 +126,30 @@ class Neo4jService:
         async with self.driver.session() as session:
             await session.run(query, paper_id=paper_id, concept=concept.lower().strip())
 
+    async def link_paper_to_concept_mentions(self, paper_id: str, concept: str) -> None:
+        """
+        Create a MENTIONS relationship: (Paper)-[:MENTIONS]->(Concept).
+        Used by ConceptExtractorAgent — semantically: a paper mentions a concept.
+        """
+        query = """
+        MERGE (p:Paper {paper_id: $paper_id})
+        MERGE (c:Concept {name: $concept})
+        MERGE (p)-[:MENTIONS]->(c)
+        """
+        async with self.driver.session() as session:
+            await session.run(query, paper_id=paper_id, concept=concept.lower().strip())
+
+    async def run_query(
+        self, cypher: str, parameters: Optional[dict] = None
+    ) -> list[dict]:
+        """
+        Run an arbitrary Cypher query and return results as a list of dicts.
+        Useful for ad-hoc queries and the /api/graph/concepts endpoint.
+        """
+        async with self.driver.session() as session:
+            result = await session.run(cypher, parameters or {})
+            return await result.data()
+
     async def link_concepts(self, concept_a: str, concept_b: str) -> None:
         """
         Create a RELATED_TO relationship between two concepts (undirected).
