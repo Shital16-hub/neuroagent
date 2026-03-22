@@ -6,7 +6,7 @@ Conflict / ContradictionReport — output from the Contradiction Detector Agent.
 """
 
 from typing import Literal, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class PaperSummary(BaseModel):
@@ -39,17 +39,20 @@ class PaperSummary(BaseModel):
             raise ValueError("key_claims must contain at least one claim")
         return [claim.strip() for claim in v if claim.strip()]
 
-    model_config = {"json_schema_extra": {"example": {
-        "paper_id": "2307.09288",
-        "key_claims": [
-            "Llama 2 outperforms open-source models on most benchmarks",
-            "RLHF fine-tuning improves safety without sacrificing helpfulness",
-        ],
-        "methodology": "Supervised fine-tuning followed by RLHF with human preference data",
-        "findings": "Llama 2-Chat achieves comparable performance to GPT-3.5 on many tasks",
-        "limitations": "Still underperforms GPT-4; safety evaluations limited to English",
-        "summary_model": "llama-3.1-8b-instant",
-    }}}
+    model_config = ConfigDict(
+        protected_namespaces=(),
+        json_schema_extra={"example": {
+            "paper_id": "2307.09288",
+            "key_claims": [
+                "Llama 2 outperforms open-source models on most benchmarks",
+                "RLHF fine-tuning improves safety without sacrificing helpfulness",
+            ],
+            "methodology": "Supervised fine-tuning followed by RLHF with human preference data",
+            "findings": "Llama 2-Chat achieves comparable performance to GPT-3.5 on many tasks",
+            "limitations": "Still underperforms GPT-4; safety evaluations limited to English",
+            "summary_model": "llama-3.1-8b-instant",
+        }},
+    )
 
 
 class Conflict(BaseModel):

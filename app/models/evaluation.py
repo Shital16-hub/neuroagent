@@ -7,7 +7,7 @@ Scores are persisted to MongoDB and retrievable via the /api/evaluations endpoin
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class EvaluationResult(BaseModel):
@@ -76,14 +76,17 @@ class EvaluationResult(BaseModel):
         """Returns True if average score >= 0.7 (reasonable quality bar)."""
         return self.average_score >= 0.7
 
-    model_config = {"json_schema_extra": {"example": {
-        "session_id": "sess_abc123",
-        "query": "What are the limitations of RAG systems?",
-        "faithfulness": 0.87,
-        "answer_relevancy": 0.91,
-        "context_precision": 0.83,
-        "context_recall": None,
-        "model_used": "llama-3.1-8b-instant",
-        "num_papers_used": 8,
-        "evaluated_at": "2025-01-15T10:30:00Z",
-    }}}
+    model_config = ConfigDict(
+        protected_namespaces=(),  # allow fields prefixed with 'model_'
+        json_schema_extra={"example": {
+            "session_id": "sess_abc123",
+            "query": "What are the limitations of RAG systems?",
+            "faithfulness": 0.87,
+            "answer_relevancy": 0.91,
+            "context_precision": 0.83,
+            "context_recall": None,
+            "model_used": "llama-3.1-8b-instant",
+            "num_papers_used": 8,
+            "evaluated_at": "2025-01-15T10:30:00Z",
+        }},
+    )
