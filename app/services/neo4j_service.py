@@ -5,8 +5,8 @@ Manages the knowledge graph: paper nodes, concept nodes, and the
 relationships between them (cites, contains, related_to).
 
 Supports both local bolt:// and AuraDB cloud neo4j+s:// connections.
-The neo4j+s:// URI enables TLS automatically — no encrypted=True flag
-or TRUST_ALL_CERTIFICATES needed (those are for self-signed certs only).
+The neo4j+s:// URI enables TLS automatically. TrustAll() is passed to
+the driver to handle Windows SSL certificate store gaps with AuraDB.
 
 Usage:
     from app.services.neo4j_service import Neo4jService
@@ -20,6 +20,7 @@ Usage:
 import logging
 from typing import Any, Optional
 
+import neo4j
 from neo4j import AsyncGraphDatabase, AsyncDriver
 
 from app.config import get_settings
@@ -46,8 +47,10 @@ class Neo4jService:
         Open the async Neo4j driver and verify connectivity.
 
         Called once at application startup via FastAPI lifespan.
-        AuraDB URIs (neo4j+s://) handle TLS via the URI scheme —
-        no additional flags required.
+        AuraDB URIs (neo4j+s://) handle TLS via the URI scheme.
+        TrustAll() is required on Windows where Python's SSL certificate
+        store does not include the AuraDB certificate chain, causing
+        ssl.SSLCertVerificationError on self-signed certs.
         """
         settings = get_settings()
         logger.info("Connecting to Neo4j | uri_prefix=%s", settings.neo4j_uri[:30])
@@ -55,6 +58,7 @@ class Neo4jService:
         self._driver = AsyncGraphDatabase.driver(
             settings.neo4j_uri,
             auth=(settings.neo4j_username, settings.neo4j_password),
+            trusted_certificates=neo4j.TrustAll(),
         )
 
         # Verify the connection is live
