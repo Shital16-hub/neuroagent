@@ -20,7 +20,6 @@ Usage:
 import logging
 from typing import Any, Optional
 
-import neo4j
 from neo4j import AsyncGraphDatabase, AsyncDriver
 
 from app.config import get_settings
@@ -53,12 +52,19 @@ class Neo4jService:
         ssl.SSLCertVerificationError on self-signed certs.
         """
         settings = get_settings()
-        logger.info("Connecting to Neo4j | uri_prefix=%s", settings.neo4j_uri[:30])
+
+        # On Windows, Python's SSL store lacks AuraDB's intermediate CA.
+        # neo4j+ssc:// is the "self-signed certificate" variant — it uses
+        # TLS encryption but skips certificate chain verification.
+        # neo4j+s:// → neo4j+ssc://  (bolt+s:// → bolt+ssc:// also handled)
+        uri = settings.neo4j_uri.replace("neo4j+s://", "neo4j+ssc://", 1)
+        uri = uri.replace("bolt+s://", "bolt+ssc://", 1)
+
+        logger.info("Connecting to Neo4j | uri_prefix=%s", uri[:30])
 
         self._driver = AsyncGraphDatabase.driver(
-            settings.neo4j_uri,
+            uri,
             auth=(settings.neo4j_username, settings.neo4j_password),
-            trusted_certificates=neo4j.TrustAll(),
         )
 
         # Verify the connection is live
