@@ -2,11 +2,14 @@ version: "3.9"
 
 # NeuroAgent — Local Development Services
 # Run with: docker-compose up -d
-# All services use free/open-source images with persistent volumes.
+#
+# MongoDB  → MongoDB Atlas (cloud, free tier) — not run locally
+# Neo4j    → Neo4j AuraDB (cloud, free tier) — not run locally
+# Qdrant   → runs locally (no fully-free cloud tier with persistent storage)
 
 services:
 
-  # ── Qdrant Vector Database ─────────────────────────────────────────────────
+  # ── Qdrant Vector Database (local) ────────────────────────────────────────
   qdrant:
     image: qdrant/qdrant:v1.13.2
     container_name: neuroagent_qdrant
@@ -25,52 +28,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── MongoDB Application Database ───────────────────────────────────────────
-  mongodb:
-    image: mongo:7.0
-    container_name: neuroagent_mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-    environment:
-      MONGO_INITDB_DATABASE: neuroagent
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ── Neo4j Graph Database ───────────────────────────────────────────────────
-  neo4j:
-    image: neo4j:5.26.0-community
-    container_name: neuroagent_neo4j
-    restart: unless-stopped
-    ports:
-      - "7474:7474"   # HTTP browser
-      - "7687:7687"   # Bolt protocol
-    volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
-    environment:
-      NEO4J_AUTH: neo4j/neuroagent_dev
-      NEO4J_PLUGINS: '["apoc"]'
-      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
-      NEO4J_dbms_memory_heap_initial__size: "512m"
-      NEO4J_dbms_memory_heap_max__size: "1G"
-    healthcheck:
-      test: ["CMD", "wget", "-O", "/dev/null", "-q", "http://localhost:7474"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-
 volumes:
   qdrant_data:
-    driver: local
-  mongodb_data:
-    driver: local
-  neo4j_data:
-    driver: local
-  neo4j_logs:
     driver: local
