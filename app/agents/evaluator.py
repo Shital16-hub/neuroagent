@@ -47,73 +47,101 @@ def _run_ragas_sync(
     embedding_model: str,
 ) -> tuple[float, float, float, Optional[str]]:
     """
-    Run RAGAS 0.4.x faithfulness evaluation synchronously.
+    Run RAGAS 0.4.x evaluation synchronously.
 
     Returns (faithfulness, answer_relevancy, context_precision, error_message).
     error_message is None on success, a string on failure.
 
-    Metric: faithfulness (no ground truth required).
-      - Checks if the synthesis claims are grounded in retrieved context
-      - answer_relevancy and context_precision are set equal to faithfulness
-        (RAGAS answer_relevancy requires n>1 LLM calls which Groq doesn't support)
+    Metrics computed:
+      - faithfulness:     Is the synthesis grounded in retrieved context?
+                          (no ground truth required — uses NLI)
+      - answer_relevancy: Does the synthesis address the original query?
+                          (uses LLM + HuggingFace embeddings)
+      - context_precision: Proxy = faithfulness score
+                          (real context_precision needs a reference answer we don't have)
 
-    Uses the deprecated-but-still-functional ragas.evaluate() with:
-      - Old-style Metric instances (faithfulness from ragas.metrics._faithfulness)
-      - LangchainLLMWrapper(ChatGroq) for evaluation calls
-      - LangchainEmbeddingsWrapper(HuggingFaceEmbeddings) for relevancy scoring
+    RAGAS 0.4.x API notes (breaking changes from 0.1.x):
+      - Column names changed: question→user_input, answer→response, contexts→retrieved_contexts
+      - LLM/embeddings must be passed to evaluate(), NOT set on the metric singleton
+      - Use fresh Faithfulness()/AnswerRelevancy() instances, not module-level singletons
 
-    Runs in a thread so it can call asyncio.run() without conflicting
-    with the outer async event loop.
+    Runs in a thread pool executor so RAGAS can call asyncio.run() without
+    conflicting with the outer LangGraph event loop.
     """
     try:
-        import warnings
-        warnings.filterwarnings("ignore", category=DeprecationWarning)
-
         import math
+        import warnings
+        warnings.filterwarnings("ignore")
+
         from langchain_groq import ChatGroq
         from ragas.llms import LangchainLLMWrapper
-        from ragas.metrics._faithfulness import faithfulness
+        from ragas.metrics._faithfulness import Faithfulness
+        from ragas.metrics._answer_relevance import AnswerRelevancy
         from ragas import evaluate
         from datasets import Dataset
 
-        # Configure LLM via LangChain wrapper (old-style Metric API)
         llm = ChatGroq(model=model, api_key=api_key, temperature=0.0)
         wrapped_llm = LangchainLLMWrapper(llm)
-        faithfulness.llm = wrapped_llm
 
-        # Configure embeddings for answer_relevancy (HuggingFace, free)
+        # Fresh metric instances — never reuse module-level singletons across calls
+        faith_metric = Faithfulness()
+        metrics = [faith_metric]
+
+        # Add AnswerRelevancy when HuggingFace embeddings are available
+        wrapped_emb = None
         try:
             from langchain_huggingface import HuggingFaceEmbeddings
             from ragas.embeddings import LangchainEmbeddingsWrapper
             emb = HuggingFaceEmbeddings(model_name=embedding_model)
             wrapped_emb = LangchainEmbeddingsWrapper(emb)
-            faithfulness.embeddings = wrapped_emb
+            metrics.append(AnswerRelevancy())
         except Exception:
-            pass  # Embeddings not needed for faithfulness metric
+            pass  # proceed with faithfulness-only if embeddings fail
 
-        # Ensure contexts is non-empty
         eval_contexts = contexts if contexts else ["No context available."]
 
+        # RAGAS 0.4.x column names (breaking change from 0.1.x)
         dataset = Dataset.from_dict({
-            "question": [query],
-            "answer": [synthesis],
-            "contexts": [eval_contexts],
+            "user_input": [query],
+            "response": [synthesis],
+            "retrieved_contexts": [eval_contexts],
         })
 
-        result = evaluate(dataset, metrics=[faithfulness])
+        from ragas import RunConfig
 
-        raw_faith = result["faithfulness"]
-        if isinstance(raw_faith, (list, tuple)):
-            raw_faith = raw_faith[0]
+        # Retry up to 3 times with up to 60 s backoff — handles Groq rate limits
+        # that occur after the pipeline's 12+ prior LLM calls exhaust the budget.
+        # raise_exceptions=True surfaces failures instead of silently returning NaN.
+        run_config = RunConfig(max_retries=3, max_wait=60, timeout=120)
 
-        # Handle NaN (can occur with empty/trivial inputs)
-        if math.isnan(float(raw_faith)):
-            raw_faith = 0.0
+        result = evaluate(
+            dataset,
+            metrics=metrics,
+            llm=wrapped_llm,
+            embeddings=wrapped_emb,
+            show_progress=False,
+            raise_exceptions=True,
+            run_config=run_config,
+        )
 
-        faith = max(0.0, min(1.0, float(raw_faith)))
-        # Use faithfulness as proxy for all three metrics
-        # (answer_relevancy / context_precision require OpenAI or ground truth)
-        return faith, faith, faith, None
+        def _safe_score(key: str) -> float:
+            val = result[key]
+            if isinstance(val, (list, tuple)):
+                val = val[0]
+            val = float(val)
+            if math.isnan(val):
+                raise ValueError(
+                    f"RAGAS metric '{key}' returned NaN — "
+                    "likely a rate-limit or LLM failure that was not retried"
+                )
+            return max(0.0, min(1.0, val))
+
+        faith = _safe_score("faithfulness")
+        relevancy = _safe_score("answer_relevancy") if wrapped_emb else faith
+        # context_precision requires a reference answer — use faithfulness as proxy
+        precision = faith
+
+        return faith, relevancy, precision, None
 
     except Exception as exc:
         return 0.0, 0.0, 0.0, str(exc)
@@ -160,6 +188,24 @@ class EvaluatorAgent:
         if not synthesis:
             logger.warning("EvaluatorAgent: no synthesis to evaluate | session={}", session_id)
             return {**state, "evaluation": None}
+
+        # ── Build evaluation context ─────────────────────────────────────────
+        # Prefer Qdrant semantic search chunks; fall back to paper summaries.
+        # The synthesis is grounded in summaries, so they are valid faithfulness
+        # context when Qdrant returned no results (e.g. first run, empty index).
+        if not qdrant_context:
+            summaries = state.get("summaries", [])
+            qdrant_context = [
+                f"{s.findings} {' '.join(s.key_claims[:2])}"
+                for s in summaries[:8]
+                if getattr(s, "findings", "")
+            ]
+            if qdrant_context:
+                logger.info(
+                    "EvaluatorAgent: Qdrant context empty — using {} summary chunks | session={}",
+                    len(qdrant_context),
+                    session_id,
+                )
 
         # ── Run RAGAS in thread pool ─────────────────────────────────────────
         settings = self._settings

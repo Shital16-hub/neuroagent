@@ -1,0 +1,7 @@
+# NeuroAgent Gradio frontend — HF Spaces requirements
+# These are the only packages the frontend needs.
+# The heavy ML stack (LangGraph, Qdrant, etc.) runs on the backend.
+
+gradio>=4.44.0
+httpx>=0.27.0
+plotly>=5.22.0

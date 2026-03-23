@@ -1,11 +1,12 @@
 version: "3.9"
 
-# NeuroAgent — Local Development Services
+# NeuroAgent — Local Development Stack
 # Run with: docker-compose up -d
 #
 # MongoDB  → MongoDB Atlas (cloud, free tier) — not run locally
 # Neo4j    → Neo4j AuraDB (cloud, free tier) — not run locally
 # Qdrant   → runs locally (no fully-free cloud tier with persistent storage)
+# Backend  → runs locally, connects to Qdrant + cloud services via .env
 
 services:
 
@@ -27,6 +28,52 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ── NeuroAgent Backend (FastAPI) ───────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: neuroagent_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override Qdrant URL to use the local container
+      QDRANT_URL: http://qdrant:6333
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8000"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── NeuroAgent Frontend (Gradio) ───────────────────────────────────────────
+  frontend:
+    image: python:3.11-slim
+    container_name: neuroagent_frontend
+    restart: unless-stopped
+    working_dir: /app
+    command: >
+      sh -c "pip install --quiet -r requirements.txt &&
+             python app.py"
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "7860:7860"
+    environment:
+      NEUROAGENT_API_URL: http://backend:8000
+      GRADIO_PORT: "7860"
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   qdrant_data:

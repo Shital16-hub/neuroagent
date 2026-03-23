@@ -102,31 +102,54 @@ def _format_papers_block(summaries: list[PaperSummary]) -> str:
     return "\n".join(lines)
 
 
+def _fix_trailing_commas(s: str) -> str:
+    """Remove trailing commas before ] or } — a common LLM JSON defect."""
+    return re.sub(r",\s*([}\]])", r"\1", s)
+
+
 def _extract_json(raw: str) -> Optional[dict]:
-    """Extract JSON from LLM response, handling markdown fences and prose."""
+    """
+    Extract JSON from LLM response, handling:
+      1. DeepSeek-style <think>...</think> wrappers
+      2. Markdown code fences (```json ... ```)
+      3. Prose surrounding the JSON object
+      4. Trailing commas before ] or } (common LLM defect)
+    """
     raw = raw.strip()
 
     # DeepSeek-R1 wraps reasoning in <think>...</think> — strip it
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
+    # 1. Direct parse
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    # 2. Markdown fence  ```json { ... } ```
+    fence_match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL)
     if fence_match:
+        candidate = fence_match.group(1)
         try:
-            return json.loads(fence_match.group(1))
+            return json.loads(candidate)
         except json.JSONDecodeError:
-            pass
+            try:
+                return json.loads(_fix_trailing_commas(candidate))
+            except json.JSONDecodeError:
+                pass
 
+    # 3. Bare JSON object — greedy match from first { to last }
     brace_match = re.search(r"\{.*\}", raw, re.DOTALL)
     if brace_match:
+        candidate = brace_match.group()
         try:
-            return json.loads(brace_match.group())
+            return json.loads(candidate)
         except json.JSONDecodeError:
-            pass
+            # 4. Fix trailing commas and retry
+            try:
+                return json.loads(_fix_trailing_commas(candidate))
+            except json.JSONDecodeError:
+                pass
 
     return None
 
@@ -243,7 +266,7 @@ class ContradictionDetectorAgent:
             HumanMessage(content=user_text),
         ]
 
-        llm = LLMFactory.get_reasoning_llm(temperature=0.0, max_tokens=4096)
+        llm = LLMFactory.get_reasoning_llm(temperature=0.0, max_tokens=4096, json_mode=True)
 
         try:
             response = await llm.ainvoke(messages)

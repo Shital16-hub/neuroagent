@@ -56,6 +56,7 @@ class LLMFactory:
         temperature: float = 0.1,
         max_tokens: int = 2048,
         provider: Optional[LLMProvider] = None,
+        json_mode: bool = False,
     ) -> BaseChatModel:
         """
         Return the best available LLM for standard tasks.
@@ -76,19 +77,19 @@ class LLMFactory:
         target_model = model or settings.default_llm_model
 
         if provider:
-            return cls._build_llm(provider, target_model, temperature, max_tokens)
+            return cls._build_llm(provider, target_model, temperature, max_tokens, json_mode)
 
         # Auto-select provider by priority
         if settings.has_groq:
             logger.debug("LLMFactory: using Groq provider, model=%s", target_model)
-            return cls._build_groq(target_model, temperature, max_tokens)
+            return cls._build_groq(target_model, temperature, max_tokens, json_mode)
 
         if settings.has_openai:
             logger.warning(
                 "LLMFactory: Groq not configured, falling back to OpenAI"
             )
             fallback_model = cls.OPENAI_DEFAULT_MODEL
-            return cls._build_openai(fallback_model, temperature, max_tokens)
+            return cls._build_openai(fallback_model, temperature, max_tokens, json_mode)
 
         if settings.has_ollama:
             logger.warning(
@@ -107,16 +108,20 @@ class LLMFactory:
         cls,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        json_mode: bool = False,
     ) -> BaseChatModel:
         """
         Return an LLM optimized for multi-step reasoning tasks.
 
         Used by: Contradiction Detector Agent, Synthesis Agent.
-        On Groq free tier, this uses deepseek-r1-distill-llama-70b.
+        On Groq free tier, this uses llama-3.3-70b-versatile.
 
         Args:
             temperature: Lower temperature for more deterministic reasoning.
             max_tokens: Higher token limit for longer reasoning chains.
+            json_mode: If True, instruct the provider to return valid JSON only.
+                       Groq/OpenAI guarantee parseable JSON when this is set.
+                       Ollama falls back to prompt-only enforcement.
 
         Returns:
             A LangChain BaseChatModel instance.
@@ -125,18 +130,18 @@ class LLMFactory:
 
         if settings.has_groq:
             model = settings.reasoning_llm_model
-            logger.debug("LLMFactory: reasoning LLM — Groq/%s", model)
-            return cls._build_groq(model, temperature, max_tokens)
+            logger.debug("LLMFactory: reasoning LLM — Groq/%s json_mode=%s", model, json_mode)
+            return cls._build_groq(model, temperature, max_tokens, json_mode)
 
         if settings.has_openai:
             logger.warning("LLMFactory: reasoning LLM — falling back to OpenAI")
-            return cls._build_openai(cls.OPENAI_REASONING_MODEL, temperature, max_tokens)
+            return cls._build_openai(cls.OPENAI_REASONING_MODEL, temperature, max_tokens, json_mode)
 
         # Fall back to default if no specialized reasoning model available
         logger.warning(
             "LLMFactory: no reasoning-capable provider configured, using default LLM"
         )
-        return cls.get_llm(temperature=temperature, max_tokens=max_tokens)
+        return cls.get_llm(temperature=temperature, max_tokens=max_tokens, json_mode=json_mode)
 
     @classmethod
     def get_provider(cls) -> LLMProvider:
@@ -159,44 +164,57 @@ class LLMFactory:
         model: str,
         temperature: float,
         max_tokens: int,
+        json_mode: bool = False,
     ) -> BaseChatModel:
         """Dispatch to the correct provider builder."""
         if provider == LLMProvider.GROQ:
-            return cls._build_groq(model, temperature, max_tokens)
+            return cls._build_groq(model, temperature, max_tokens, json_mode)
         if provider == LLMProvider.OPENAI:
-            return cls._build_openai(model, temperature, max_tokens)
+            return cls._build_openai(model, temperature, max_tokens, json_mode)
         if provider == LLMProvider.OLLAMA:
             return cls._build_ollama(model, temperature, max_tokens)
         raise ValueError(f"Unknown provider: {provider}")
 
     @classmethod
     def _build_groq(
-        cls, model: str, temperature: float, max_tokens: int
+        cls, model: str, temperature: float, max_tokens: int, json_mode: bool = False
     ) -> BaseChatModel:
-        """Build a Groq LLM instance."""
+        """Build a Groq LLM instance.
+
+        json_mode=True sets response_format=json_object, which guarantees the
+        response is parseable JSON. Supported on all current Groq-hosted models.
+        """
         from langchain_groq import ChatGroq
 
         settings = get_settings()
+        extra: dict = {}
+        if json_mode:
+            extra["model_kwargs"] = {"response_format": {"type": "json_object"}}
         return ChatGroq(
             model=model,
             api_key=settings.groq_api_key,
             temperature=temperature,
             max_tokens=max_tokens,
+            **extra,
         )
 
     @classmethod
     def _build_openai(
-        cls, model: str, temperature: float, max_tokens: int
+        cls, model: str, temperature: float, max_tokens: int, json_mode: bool = False
     ) -> BaseChatModel:
         """Build an OpenAI LLM instance."""
         from langchain_openai import ChatOpenAI
 
         settings = get_settings()
+        extra: dict = {}
+        if json_mode:
+            extra["response_format"] = {"type": "json_object"}
         return ChatOpenAI(
             model=model,
             api_key=settings.openai_api_key,
             temperature=temperature,
             max_tokens=max_tokens,
+            **extra,
         )
 
     @classmethod

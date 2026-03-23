@@ -7,8 +7,8 @@ Qdrant running locally and network access to arXiv/S2.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
+from typing import Optional
+from unittest.mock import AsyncMock, patch
 
 from app.models.paper import Paper
 from app.models.state import initial_state
@@ -35,9 +35,6 @@ def _make_paper(
         doi=doi,
         external_ids=external_ids,
     )
-
-
-from typing import Optional
 
 
 class TestDeduplication:

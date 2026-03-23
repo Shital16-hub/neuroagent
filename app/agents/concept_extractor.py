@@ -174,7 +174,7 @@ class ConceptExtractorAgent:
             HumanMessage(content=user_text),
         ]
 
-        llm = LLMFactory.get_llm(temperature=0.0, max_tokens=512)
+        llm = LLMFactory.get_llm(temperature=0.0, max_tokens=512, json_mode=True)
 
         try:
             response = await llm.ainvoke(messages)
@@ -217,33 +217,18 @@ class ConceptExtractorAgent:
         concepts: list[str],
     ) -> None:
         """
-        Write Paper nodes, Concept nodes, and MENTIONS edges to Neo4j.
+        Batch-write Paper nodes, Concept nodes, and MENTIONS edges to Neo4j.
 
-        Paper nodes are upserted for every fetched paper.
-        MENTIONS edges are created between each paper and all extracted concepts
-        (since we extracted concepts from the whole batch, all papers are
-        associated with all session concepts — a reasonable approximation).
-        For production, per-paper concept association would require N LLM calls.
+        Uses write_concept_graph which issues 3 UNWIND queries instead of
+        one query per entity — reduces 200+ round-trips to 3, eliminating
+        the defunct-connection window that caused intermittent write failures.
         """
-        neo4j = self._neo4j  # type: ignore[assignment]
-
-        # Build paper_id → Paper lookup for summary association
-        papers_by_id = {p.paper_id: p for p in papers}
-
-        # Upsert all Paper nodes
-        for paper in papers:
-            await neo4j.save_paper_node(paper)
-
-        # Upsert all Concept nodes
-        for concept in concepts:
-            await neo4j.save_concept_node(concept)
-
-        # Wire MENTIONS edges (each paper → each concept)
         summary_ids = {s.paper_id for s in summaries}
-        for paper_id in summary_ids:
-            for concept in concepts:
-                await neo4j.link_paper_to_concept_mentions(paper_id, concept)
-
+        await self._neo4j.write_concept_graph(  # type: ignore[union-attr]
+            papers=papers,
+            concepts=concepts,
+            paper_ids=summary_ids,
+        )
         logger.info(
             "ConceptExtractorAgent: graph written | papers={} concepts={} edges={}",
             len(papers),
