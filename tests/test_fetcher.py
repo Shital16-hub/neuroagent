@@ -7,12 +7,14 @@ Qdrant running locally and network access to arXiv/S2.
 """
 
 import pytest
+import httpx
 from typing import Optional
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.paper import Paper
 from app.models.state import initial_state
 from app.agents.fetcher import FetcherAgent, _deduplicate
+from app.services.arxiv_client import _extract_search_terms
 
 
 def _make_paper(
@@ -163,3 +165,83 @@ class TestFetcherAgent:
         assert result["papers"] == []
         assert len(result["errors"]) == 1
         assert "No papers found" in result["errors"][0]
+
+    @pytest.mark.asyncio
+    async def test_s2_429_handled_gracefully(self):
+        """
+        When Semantic Scholar returns 429 (rate limit), the fetcher must still
+        return the arXiv papers and not raise — S2 failure is non-fatal.
+        """
+        agent, qdrant, mongodb = self._make_agent()
+        arxiv_papers = [_make_paper("arxiv-001", doi="10.1/a")]
+
+        mock_request = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+
+        # Patch the S2 client inside _fetch_parallel to raise 429
+        mock_arxiv_instance = AsyncMock()
+        mock_arxiv_instance.search = AsyncMock(return_value=arxiv_papers)
+        mock_s2_instance = AsyncMock()
+        mock_s2_instance.search = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "429 Too Many Requests",
+                request=mock_request,
+                response=mock_response,
+            )
+        )
+
+        with (
+            patch("app.agents.fetcher.ArxivClient") as MockArxiv,
+            patch("app.agents.fetcher.SemanticScholarClient") as MockS2,
+        ):
+            MockArxiv.return_value.__aenter__ = AsyncMock(return_value=mock_arxiv_instance)
+            MockArxiv.return_value.__aexit__ = AsyncMock(return_value=None)
+            MockS2.return_value.__aenter__ = AsyncMock(return_value=mock_s2_instance)
+            MockS2.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            state = initial_state(query="RAG limitations", session_id="sess-429-test")
+            result = await agent.run(state)
+
+        # arXiv papers are returned despite S2 failure
+        assert len(result["papers"]) == 1
+        assert result["papers"][0].paper_id == "arxiv-001"
+        # S2 429 is a warning, not a fatal error — no pipeline errors added
+        assert result["errors"] == []
+
+
+# ── Query extraction ───────────────────────────────────────────────────────────
+
+class TestQueryExtraction:
+    """Tests for the search term extractor that cleans natural-language queries."""
+
+    def test_rag_acronym_expanded(self):
+        terms = _extract_search_terms("What are the limitations of RAG systems?")
+        assert "retrieval" in terms.lower()
+        assert "RAG" not in terms  # expanded, not kept as acronym
+
+    def test_llm_acronym_expanded(self):
+        terms = _extract_search_terms("How do LLMs perform on reasoning tasks?")
+        assert "language" in terms.lower()
+
+    def test_filler_words_removed(self):
+        terms = _extract_search_terms("What are the limitations of fine-tuning?")
+        for filler in ("what", "are", "the", "of"):
+            assert filler not in terms.split()
+
+    def test_technical_terms_preserved(self):
+        terms = _extract_search_terms("transformer attention mechanism efficiency")
+        assert "transformer" in terms
+        assert "attention" in terms
+        assert "mechanism" in terms
+
+    def test_acronyms_are_fully_expanded(self):
+        """RLHF and LLM should both be expanded to full phrases."""
+        terms = _extract_search_terms("RLHF and LLM research")
+        assert "reinforcement" in terms.lower()
+        assert "language" in terms.lower()
+
+    def test_empty_after_stripping_falls_back_to_original(self):
+        """If all words are filler words, fall back to the original query."""
+        result = _extract_search_terms("what is the")
+        assert len(result) > 0
