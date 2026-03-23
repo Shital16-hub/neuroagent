@@ -24,6 +24,7 @@ import logging
 
 from app.config import get_settings
 from app.models.paper import Paper
+from app.services.arxiv_client import _extract_search_terms
 from app.utils.text_utils import clean_text, extract_year_from_date
 
 _S2_BASE_URL = "https://api.semanticscholar.org/graph/v1"
@@ -176,12 +177,16 @@ class SemanticScholarClient:
 
         exclude = exclude_doi_set or set()
 
+        search_terms = _extract_search_terms(query)
         logger.info(
-            "Semantic Scholar search | query='{}' max_results={}", query, max_results
+            "Semantic Scholar search | query='{}' search_terms='{}' max_results={}",
+            query,
+            search_terms,
+            max_results,
         )
 
         params = {
-            "query": query,
+            "query": search_terms,
             "limit": min(max_results, 100),
             "fields": _S2_FIELDS,
         }

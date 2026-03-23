@@ -23,6 +23,40 @@ from app.utils.text_utils import clean_text, extract_year_from_date
 _ARXIV_BASE_URL = "http://export.arxiv.org/api/query"
 _RATE_LIMIT_DELAY = 3.0  # seconds between requests
 
+# Words to strip from natural-language queries before passing to arXiv.
+# These are filler/question words that produce irrelevant matches.
+_FILLER_WORDS = {
+    "what", "how", "why", "when", "where", "which", "who", "whose",
+    "is", "are", "was", "were", "be", "been", "being",
+    "do", "does", "did", "can", "could", "would", "should", "will",
+    "a", "an", "the", "and", "or", "of", "in", "on", "at", "to",
+    "for", "with", "about", "that", "this", "these", "those",
+    "by", "from", "as", "its", "it", "i", "me", "my",
+    "please", "tell", "explain", "describe", "list", "give", "show",
+    "find", "get", "use", "using", "used", "uses", "review",
+    "research", "study", "paper", "papers", "between", "across",
+    "some", "any", "all", "most", "more", "very", "just", "also",
+}
+
+
+def _extract_search_terms(query: str, max_terms: int = 8) -> str:
+    """
+    Extract key technical terms from a natural-language research question.
+
+    Strips question words, articles, and filler words so that arXiv receives
+    a focused keyword query rather than a full English sentence.
+
+    Examples:
+        "What are the limitations of RAG systems in production?"
+            → "limitations RAG systems production"
+        "transformer attention mechanism efficiency"
+            → "transformer attention mechanism efficiency"  (unchanged)
+    """
+    cleaned = re.sub(r"[^\w\s-]", " ", query.lower())
+    words = cleaned.split()
+    terms = [w.strip("-") for w in words if len(w) > 1 and w not in _FILLER_WORDS]
+    return " ".join(terms[:max_terms]) if terms else query
+
 
 def _extract_arxiv_id(entry_id: str) -> str:
     """
@@ -143,14 +177,21 @@ class ArxivClient:
         if self._client is None:
             raise RuntimeError("ArxivClient must be used as an async context manager")
 
+        # Strip question/filler words so arXiv gets technical keywords, not full sentences.
+        search_terms = _extract_search_terms(query)
         params = {
-            "search_query": f"all:{query}",
+            "search_query": f"all:{search_terms}",
             "max_results": max_results,
             "sortBy": sort_by,
             "sortOrder": "descending",
         }
 
-        logger.info("arXiv search | query='{}' max_results={}", query, max_results)
+        logger.info(
+            "arXiv search | query='{}' search_terms='{}' max_results={}",
+            query,
+            search_terms,
+            max_results,
+        )
 
         try:
             response = await self._client.get(_ARXIV_BASE_URL, params=params)

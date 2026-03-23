@@ -137,11 +137,20 @@ def _run_ragas_sync(
             return max(0.0, min(1.0, val))
 
         faith = _safe_score("faithfulness")
-        relevancy = _safe_score("answer_relevancy") if wrapped_emb else faith
-        # context_precision requires a reference answer — use faithfulness as proxy
+
+        emb_warning: Optional[str] = None
+        if wrapped_emb:
+            relevancy = _safe_score("answer_relevancy")
+        else:
+            # HuggingFace embeddings unavailable — proxy with faithfulness
+            relevancy = faith
+            emb_warning = "answer_relevancy proxied from faithfulness (HF embeddings unavailable)"
+
+        # context_precision requires a ground-truth reference answer (we don't have one).
+        # Use faithfulness as a proxy: a faithful, grounded answer tends to be precise.
         precision = faith
 
-        return faith, relevancy, precision, None
+        return faith, relevancy, precision, emb_warning
 
     except Exception as exc:
         return 0.0, 0.0, 0.0, str(exc)
