@@ -138,19 +138,22 @@ def _run_ragas_sync(
 
         faith = _safe_score("faithfulness")
 
-        emb_warning: Optional[str] = None
         if wrapped_emb:
             relevancy = _safe_score("answer_relevancy")
         else:
-            # HuggingFace embeddings unavailable — proxy with faithfulness
+            # HuggingFace embeddings unavailable — proxy with faithfulness.
+            # This is a known limitation, not an error — just log it.
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "RAGAS: HF embeddings unavailable; answer_relevancy proxied from faithfulness"
+            )
             relevancy = faith
-            emb_warning = "answer_relevancy proxied from faithfulness (HF embeddings unavailable)"
 
         # context_precision requires a ground-truth reference answer (we don't have one).
         # Use faithfulness as a proxy: a faithful, grounded answer tends to be precise.
         precision = faith
 
-        return faith, relevancy, precision, emb_warning
+        return faith, relevancy, precision, None
 
     except Exception as exc:
         return 0.0, 0.0, 0.0, str(exc)

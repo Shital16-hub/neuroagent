@@ -45,16 +45,20 @@ def _extract_search_terms(query: str, max_terms: int = 8) -> str:
 
     Strips question words, articles, and filler words so that arXiv receives
     a focused keyword query rather than a full English sentence.
+    Case is PRESERVED so that acronyms like "RAG", "LLM", "RLHF" remain
+    uppercase and match correctly in arXiv abstracts.
 
     Examples:
         "What are the limitations of RAG systems in production?"
             → "limitations RAG systems production"
         "transformer attention mechanism efficiency"
             → "transformer attention mechanism efficiency"  (unchanged)
+        "how does RLHF improve LLM alignment?"
+            → "RLHF improve LLM alignment"
     """
-    cleaned = re.sub(r"[^\w\s-]", " ", query.lower())
+    cleaned = re.sub(r"[^\w\s-]", " ", query)  # strip punctuation, preserve case
     words = cleaned.split()
-    terms = [w.strip("-") for w in words if len(w) > 1 and w not in _FILLER_WORDS]
+    terms = [w.strip("-") for w in words if len(w) > 1 and w.lower() not in _FILLER_WORDS]
     return " ".join(terms[:max_terms]) if terms else query
 
 
@@ -177,10 +181,11 @@ class ArxivClient:
         if self._client is None:
             raise RuntimeError("ArxivClient must be used as an async context manager")
 
-        # Strip question/filler words so arXiv gets technical keywords, not full sentences.
+        # Strip filler words; use abs: (abstract search) instead of all: (full text)
+        # to avoid matching on common words scattered throughout unrelated papers.
         search_terms = _extract_search_terms(query)
         params = {
-            "search_query": f"all:{search_terms}",
+            "search_query": f"abs:{search_terms}",
             "max_results": max_results,
             "sortBy": sort_by,
             "sortOrder": "descending",

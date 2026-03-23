@@ -7,7 +7,7 @@ Scores are persisted to MongoDB and retrievable via the /api/evaluations endpoin
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 
 class EvaluationResult(BaseModel):
@@ -63,17 +63,21 @@ class EvaluationResult(BaseModel):
     def score_in_range(cls, v: float) -> float:
         return round(v, 4)
 
+    @computed_field
     @property
     def average_score(self) -> float:
-        """Mean of the three core RAGAS metrics (excludes context_recall)."""
+        """Mean of the three core RAGAS metrics (excludes context_recall).
+        Decorated with @computed_field so Pydantic v2 includes it in model_dump()."""
         return round(
             (self.faithfulness + self.answer_relevancy + self.context_precision) / 3,
             4,
         )
 
+    @computed_field
     @property
     def passed_quality_threshold(self) -> bool:
-        """Returns True if average score >= 0.7 (reasonable quality bar)."""
+        """Returns True if average score >= 0.7.
+        Decorated with @computed_field so Pydantic v2 includes it in model_dump()."""
         return self.average_score >= 0.7
 
     model_config = ConfigDict(
