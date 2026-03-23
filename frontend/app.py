@@ -104,18 +104,28 @@ def run_research(
     # ── Evaluation ────────────────────────────────────────────────────────────
     ev = data.get("evaluation")
     if ev:
-        if ev.get("evaluation_error"):
-            eval_md = f"⚠️ Evaluation error: {ev['evaluation_error']}"
+        faith = ev.get("faithfulness") or 0.0
+        relevancy = ev.get("answer_relevancy") or 0.0
+        precision = ev.get("context_precision") or 0.0
+        avg = ev.get("average_score") or round((faith + relevancy + precision) / 3, 3)
+        passed = ev.get("passed_quality_threshold") or avg >= 0.7
+
+        err = ev.get("evaluation_error")
+        if err and faith == 0.0:
+            # Genuine failure — show error text
+            eval_md = f"⚠️ Evaluation error: {err}"
         else:
-            badge = "✅ PASS" if ev.get("passed_quality_threshold") else "⚠️ NEEDS REVIEW"
+            badge = "✅ PASS" if passed else "⚠️ NEEDS REVIEW"
+            note = f"\n\n_{err}_" if err else ""
             eval_md = (
                 f"**RAGAS Scores** — {badge}\n\n"
                 f"| Metric | Score |\n"
                 f"|--------|-------|\n"
-                f"| Faithfulness | {ev['faithfulness']:.3f} |\n"
-                f"| Answer Relevancy | {ev['answer_relevancy']:.3f} |\n"
-                f"| Context Precision | {ev['context_precision']:.3f} |\n"
-                f"| **Average** | **{ev['average_score']:.3f}** |"
+                f"| Faithfulness | {faith:.3f} |\n"
+                f"| Answer Relevancy | {relevancy:.3f} |\n"
+                f"| Context Precision | {precision:.3f} |\n"
+                f"| **Average** | **{avg:.3f}** |"
+                f"{note}"
             )
     else:
         eval_md = "_Evaluation not available (MongoDB may be offline)._"
@@ -139,14 +149,20 @@ def load_evaluations(limit: int) -> tuple[list[list], str]:
 
     rows = []
     for ev in data.get("evaluations", []):
+        faith = ev.get("faithfulness") or 0.0
+        relevancy = ev.get("answer_relevancy") or 0.0
+        precision = ev.get("context_precision") or 0.0
+        # average_score may be missing from older MongoDB docs (saved before @computed_field fix)
+        avg = ev.get("average_score") or round((faith + relevancy + precision) / 3, 3)
+        passed = ev.get("passed_quality_threshold") or avg >= 0.7
         rows.append([
             ev.get("session_id", "")[:8] + "…",
             ev.get("query", "")[:60],
-            f"{ev.get('faithfulness', 0):.3f}",
-            f"{ev.get('answer_relevancy', 0):.3f}",
-            f"{ev.get('context_precision', 0):.3f}",
-            f"{ev.get('average_score', 0):.3f}",
-            "✅" if ev.get("passed_quality_threshold") else "⚠️",
+            f"{faith:.3f}",
+            f"{relevancy:.3f}",
+            f"{precision:.3f}",
+            f"{avg:.3f}",
+            "✅" if passed else "⚠️",
         ])
 
     total = stats_data.get("total_evaluations", 0)
