@@ -23,6 +23,22 @@ from app.utils.text_utils import clean_text, extract_year_from_date
 _ARXIV_BASE_URL = "http://export.arxiv.org/api/query"
 _RATE_LIMIT_DELAY = 3.0  # seconds between requests
 
+# Common AI/ML/NLP acronyms that arXiv authors write out in full.
+# Expanding these significantly improves recall for domain-specific queries.
+_ACRONYM_EXPANSIONS: dict[str, str] = {
+    "RAG": "retrieval augmented generation",
+    "LLM": "large language model",
+    "LLMs": "large language models",
+    "RLHF": "reinforcement learning human feedback",
+    "SFT": "supervised fine-tuning",
+    "LoRA": "low rank adaptation",
+    "MoE": "mixture of experts",
+    "VLM": "vision language model",
+    "MLLM": "multimodal large language model",
+    "CoT": "chain of thought",
+    "RAGs": "retrieval augmented generation",
+}
+
 # Words to strip from natural-language queries before passing to arXiv.
 # These are filler/question words that produce irrelevant matches.
 _FILLER_WORDS = {
@@ -56,7 +72,12 @@ def _extract_search_terms(query: str, max_terms: int = 8) -> str:
         "how does RLHF improve LLM alignment?"
             → "RLHF improve LLM alignment"
     """
-    cleaned = re.sub(r"[^\w\s-]", " ", query)  # strip punctuation, preserve case
+    # Expand known acronyms first (e.g. "RAG" → "retrieval augmented generation")
+    expanded = query
+    for acronym, expansion in _ACRONYM_EXPANSIONS.items():
+        expanded = re.sub(rf"\b{re.escape(acronym)}\b", expansion, expanded)
+
+    cleaned = re.sub(r"[^\w\s-]", " ", expanded)  # strip punctuation, preserve case
     words = cleaned.split()
     terms = [w.strip("-") for w in words if len(w) > 1 and w.lower() not in _FILLER_WORDS]
     return " ".join(terms[:max_terms]) if terms else query

@@ -26,6 +26,7 @@ from qdrant_client.models import (
     Filter,
     FieldCondition,
     MatchValue,
+    MatchAny,
 )
 from sentence_transformers import SentenceTransformer
 
@@ -237,6 +238,68 @@ class QdrantService:
         logger.info(
             "Qdrant semantic search | query='{}' results={} threshold={}",
             query[:60],
+            len(papers),
+            score_threshold,
+        )
+        return papers
+
+    async def search_similar_by_ids(
+        self,
+        query: str,
+        paper_ids: list[str],
+        limit: int = 5,
+        score_threshold: float = 0.3,
+    ) -> list[Paper]:
+        """
+        Semantic search restricted to a specific set of paper IDs.
+
+        Used by SynthesisAgent to retrieve context only from the current
+        session's papers — prevents stale/unrelated papers in the index
+        from polluting the RAG context.
+
+        Args:
+            query: Natural language query string.
+            paper_ids: Only return results whose payload.paper_id is in this list.
+            limit: Maximum number of results.
+            score_threshold: Minimum cosine similarity score.
+
+        Returns:
+            List of Paper models filtered to paper_ids, ordered by similarity.
+        """
+        if not paper_ids:
+            return await self.search_similar(query, limit=limit, score_threshold=score_threshold)
+
+        settings = get_settings()
+        query_vector = await self._encode_single(query)
+
+        id_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="paper_id",
+                    match=MatchAny(any=paper_ids),
+                )
+            ]
+        )
+
+        response = await self._client.query_points(
+            collection_name=settings.qdrant_papers_collection,
+            query=query_vector,
+            query_filter=id_filter,
+            limit=limit,
+            score_threshold=score_threshold,
+            with_payload=True,
+        )
+
+        papers: list[Paper] = []
+        for hit in response.points:
+            paper = _payload_to_paper(hit.payload)
+            if paper:
+                papers.append(paper)
+
+        logger.info(
+            "Qdrant filtered search | query='{}' ids_pool={} results={} threshold={}",
+            query[:60],
+            len(paper_ids),
             len(papers),
             score_threshold,
         )

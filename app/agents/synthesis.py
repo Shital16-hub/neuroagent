@@ -144,17 +144,26 @@ class SynthesisAgent:
         )
 
         # ── Qdrant semantic search for RAG context ───────────────────────────
+        # Filter search to the current session's papers only.
+        # This prevents stale papers from previous (possibly broken) runs that
+        # are still in the Qdrant index from polluting the synthesis context.
         qdrant_context: list[str] = []
         if self._qdrant:
             try:
-                similar_papers = await self._qdrant.search_similar(
-                    query, limit=5, score_threshold=0.25
+                session_paper_ids = [p.paper_id for p in state.get("papers", [])]
+                similar_papers = await self._qdrant.search_similar_by_ids(
+                    query,
+                    paper_ids=session_paper_ids,
+                    limit=5,
+                    score_threshold=0.3,
                 )
                 qdrant_context = [
                     f"{p.title}: {p.abstract[:400]}" for p in similar_papers
                 ]
                 logger.debug(
-                    "SynthesisAgent: Qdrant context retrieved | chunks={}", len(qdrant_context)
+                    "SynthesisAgent: Qdrant context retrieved | chunks={} pool={}",
+                    len(qdrant_context),
+                    len(session_paper_ids),
                 )
             except Exception as exc:
                 logger.warning(
